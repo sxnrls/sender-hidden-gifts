@@ -52,22 +52,6 @@ Hiddie автоматизирует этот процесс и добавляе�
 
 ---
 
-## 🚀 Установка и запуск
-
-```bash
-# 1. Клонируй репозиторий
-git clone https://github.com/sxnrls/sender-hidden-gifts
-cd sender-hidden-gifts
-
-# 2. Установи зависимости
-pip install -r requirements.txt
-
-# 3. Запуск
-python sender.py
-```
-
----
-
 ## ⚙️ Получение API-ключей
 
 Это делается **один раз**. При первом запуске скрипт сам спросит их и сохранит.
@@ -89,41 +73,9 @@ python sender.py
 
 ---
 
-## 🖥️ Использование
+## ️🚀 Установка и запуск
 
-### 💻 Запуск на ПК
-
-  1. Установи Python: https://python.org/downloads
-  ⚠️ ВАЖНО: поставь галочку "Add Python to PATH" внизу окна установки
-  2. Установи библиотеки: telethon, rich, python-dotenv
-    • Нажми Win+R, напиши cmd, нажми Enter
-    • В открывшемся чёрном окне напиши и нажми Enter:
-      ```bash
-      pip install telethon
-      pip install rich
-      pip install python-dotenv
-      ```
-  3. Запусти скрипт:
-    • Открой папку с файлом sender.py
-    • Нажми на адресную строку в проводнике (где путь к папке)
-    • Напиши cmd и нажми Enter — откроется терминал в этой папке
-    • Напиши и нажми Enter:
-      ```bash
-      python sender.py
-      ```
-
-Далее следуй инструкциям скрипта:
-
-1. **ID подарка** — вводишь длинный числовой ID (например: `5170233102089322756` 🧸)
-2. **Подпись** — если нужна, открываешь «Избранное» в Telegram и пишешь там сообщение
-3. **Получатель** — `@username` или числовой ID
-4. **Подтверждение** — смотришь сводку и жмёшь Enter
-
----
-
-## 📱 Запуск на телефоне 
-
-### Android — Termux
+### 📱 Android — Termux
 
 1. Установи **Termux** с [F-Droid](https://f-droid.org/packages/com.termux/) *(не из Google Play — там устаревшая версия!)*
 2. В Termux выполни:
@@ -139,26 +91,96 @@ python sender.py
 
 **Полезно:** Чтобы Termux не убивался системой в фоне — зайди в *Настройки → Приложения → Termux → Батарея → Без ограничений*.
 
-### Android — Pydroid 3
+### 📱 Android — Pydroid 3
 
 Альтернатива Termux с графическим интерфейсом и встроенным редактором кода:
 
 1. Установи **Pydroid 3** из Google Play
 2. Установи зависимости через встроенный pip: `telethon rich python-dotenv`
-3. Открой `sender.py` и запусти
+3. Скачай этот репозиторий:
+- Нажми Code → Download ZIP.
+- Распакуй архив в удобную папку.
+5. Открой `sender.py` и запусти
 
 ### 🍏 iPhone — a-Shell
 
 1. Установи **a-Shell** из App Store *(не a-Shell mini — в mini нет pip!)*. Разработчик: Nicolas Holzschuch
-2. В a-Shell выполни:
+2. Запусти его и убедись, что находишься в папке: «~/Documents», если нет, выполни:
    ```
-   pip install telethon rich python-dotenv
+   cd ~/Documents
    ```
-3. Передай `sender.py` в iPhone через «Избранное» в Telegram, сохрани в «Файлы»
-4. В a-Shell выполни `pickFolder`, выбери папку с файлом
-5. Запусти: `python sender.py`
-
+3. Установи репозиторий:
+   ```
+   lg2 clone https://github.com/sxnrls/sender-hidden-gifts.git sender-hidden-gifts
+   ```
+4. Перейди в эту папку:
+   ```
+   cd ~/Documents/sender-hidden-gifts
+   ```
+5. Установи зависимости:
+   ```
+   pip install -r requirements.txt
+   ```
+6. Запуск:
+   ```
+   python sender.py
+   ```
 ---
+
+💻 Запуск на ПК.
+
+1. Установи **Python**
+
+• Скачай **Python** с [Официального сайта](https://python.org/downloads)
+⚠️ ВАЖНО: поставь галочку "Add Python to PATH" внизу окна установки
+
+• После установки открой "cmd" и проверь:
+    ```
+    python --version
+    pip --version
+    ```
+• Если вместо версии появляется ошибка, Python установлен неправильно или не добавлен в PATH.
+
+2. Скачай скрипт
+
+Есть два варианта:
+
+Вариант 1 — через Git
+    ```
+    git clone https://github.com/sxnrls/sender-hidden-gifts
+    cd sender-hidden-gifts
+    ```
+Вариант 2 — через ZIP
+
+• 1) Нажми Code → Download ZIP.
+• 2) Распакуй архив в удобную папку.
+• 3) Открой эту папку.
+
+3. Установи зависимости
+
+Открой командную строку в папке со скриптом и выполни:
+    ```
+    pip install -r requirements.txt
+    ```
+Если по какой-то причине "requirements.txt" не ставится, можно поставить библиотеки вручную:
+    ```
+    pip install telethon rich python-dotenv
+    ```
+
+4. Запусти скрипт. В папке со скриптом выполни:
+    ```
+    python sender.py
+    ```
+---
+
+## ⚙️ Использование
+
+После установки, следуй понятным инструкциям в терминале:
+
+1. **ID подарка** — вводишь длинный числовой ID (например: `5170233102089322756` 🧸)
+2. **Подпись** — если нужна, открываешь «Избранное» в Telegram и пишешь там любое сообщение до 128 символов, отправляешь
+3. **Получатель** — `@username` или числовой ID
+4. **Подтверждение** — смотришь сводку и жмёшь Enter
 
 ## 🛠️ Возможные ошибки
 
