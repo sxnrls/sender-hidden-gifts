@@ -3,14 +3,19 @@
 """
 Hiddie — Отправитель скрытых подарков Telegram
 ───────────────────────────────────────────────
-Отправляет звёздные подарки, скрытые из UI Telegram,
+Отправляет подарки за звёзды, скрытые из UI Telegram,
 с поддержкой премиум-эмодзи в подписи через «Избранное».
 """
+
+# ╔══════════════════════════════════════════════╗
+# ║          Стандартная библиотека              ║
+# ╚══════════════════════════════════════════════╝
 
 import argparse
 import asyncio
 import os
 import sys
+import time
 from pathlib import Path
 
 
@@ -19,7 +24,6 @@ from pathlib import Path
 # ╚══════════════════════════════════════════════╝
 
 def _check_dependencies():
-    """Проверяет наличие всех необходимых библиотек перед запуском."""
     missing = []
     for module, package in [
         ("telethon", "telethon"),
@@ -49,7 +53,6 @@ from dotenv import load_dotenv, set_key
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Confirm, Prompt
 from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
@@ -91,14 +94,80 @@ console = Console(
 
 ENV_FILE       = Path(".env")
 SESSION        = "gift_sender"
-CAPTION_LIMIT  = 128   # Telegram ограничивает подпись к подарку 128 символами
+CAPTION_LIMIT  = 128
+
+AUTH_RETRY_COUNT = 4
+AUTH_RETRY_DELAY = 3
+
+
+# ╔══════════════════════════════════════════════╗
+# ║              Ввод и подтверждение            ║
+# ╚══════════════════════════════════════════════╝
+
+def _read_line(label: str = "  › ") -> str:
+    """
+    Читает одну строку с клавиатуры через встроенный input().
+    """
+    while True:
+        try:
+            return input(label)
+        except EOFError:
+            time.sleep(0.3)
+
+
+def _ask(prompt: str, *, default: str | None = None) -> str:
+    """Выводит подсказку через Rich, читает ответ через _read_line()."""
+    console.print(prompt)
+    raw = _read_line().strip()
+    return raw if raw else (default or "")
+
+
+def _confirm(prompt: str, *, default: bool = True) -> bool:
+    """Выводит подсказку через Rich, читает y/n через _read_line()."""
+    hint = "[Y/n]" if default else "[y/N]"
+    console.print(f"{prompt}  [dim]{hint}[/dim]")
+    raw = _read_line().strip().lower()
+    if not raw:
+        return default
+    return raw in ("y", "yes", "д", "да")
+
+
+def _ask_password(prompt: str) -> str:
+    """
+    Запрашивает пароль открытым текстом (без скрытия ввода).
+    """
+    console.print(prompt)
+    return _read_line().strip()
+
+
+# ╔══════════════════════════════════════════════╗
+# ║       Кросс-платформенный event loop         ║
+# ╚══════════════════════════════════════════════╝
+
+def _run_async(coro):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        try:
+            pending = asyncio.all_tasks(loop)
+            if pending:
+                loop.run_until_complete(
+                    asyncio.gather(*pending, return_exceptions=True)
+                )
+        except Exception:
+            pass
+        try:
+            loop.close()
+        except Exception:
+            pass
 
 
 # ╔══════════════════════════════════════════════╗
 # ║                  Баннер                      ║
 # ╚══════════════════════════════════════════════╝
 
-# ASCII-арт «Hiddie» (шрифт Big Money NW) + миниатюрная иконка подарка
 _HIDDIE_LINES = [
     r"$$\   $$\ $$\       $$\       $$\ $$\           ",
     r"$$ |  $$ |\__|      $$ |      $$ |\__|          ",
@@ -110,17 +179,10 @@ _HIDDIE_LINES = [
     r"\__|  \__|\__| \_______| \_______|\___|\_______|",
 ]
 
-
-def _build_banner_string() -> str:
-    """Собирает строку баннера: ASCII Hiddie."""
-    return "\n".join(_HIDDIE_LINES)
-
-
-BANNER_ART = _build_banner_string()
+BANNER_ART = "\n".join(_HIDDIE_LINES)
 
 
 def show_banner():
-    """Выводит приветственный баннер в терминал."""
     console.print()
     console.print(Text(BANNER_ART, style="bold magenta"))
     console.print()
@@ -147,11 +209,6 @@ def show_banner():
 # ╚══════════════════════════════════════════════╝
 
 def load_or_prompt_credentials() -> tuple[int, str]:
-    """
-    Загружает API-ключи из файла .env.
-    Если файл отсутствует — интерактивно запрашивает их у пользователя и сохраняет.
-    Возвращает (api_id, api_hash).
-    """
     load_dotenv(ENV_FILE)
     api_id   = os.getenv("TG_API_ID",   "").strip()
     api_hash = os.getenv("TG_API_HASH", "").strip()
@@ -163,7 +220,6 @@ def load_or_prompt_credentials() -> tuple[int, str]:
         console.print()
         return int(api_id), api_hash
 
-    # ── первый запуск: объяснение и запрос данных ─────────────────────────────
     console.print(
         Panel(
             Text.from_markup(
@@ -182,13 +238,13 @@ def load_or_prompt_credentials() -> tuple[int, str]:
     console.print()
 
     while True:
-        raw_id = Prompt.ask("  [accent]API ID[/accent]  [dim](число)[/dim]").strip()
+        raw_id = _ask("  [accent]API ID[/accent]  [dim](число)[/dim]").strip()
         if raw_id.isdigit():
             api_id = raw_id
             break
         console.print("  [err]✗  API ID должен быть числом.[/err]")
 
-    api_hash = Prompt.ask("  [accent]API Hash[/accent] [dim](hex-строка)[/dim]").strip()
+    api_hash = _ask("  [accent]API Hash[/accent] [dim](hex-строка)[/dim]").strip()
     if not api_hash:
         console.print("  [err]✗  API Hash не может быть пустым.[/err]")
         sys.exit(1)
@@ -203,41 +259,111 @@ def load_or_prompt_credentials() -> tuple[int, str]:
 
 
 # ╔══════════════════════════════════════════════╗
+# ║        Гарантия подключения клиента          ║
+# ╚══════════════════════════════════════════════╝
+
+async def _connect_with_retry(client: TelegramClient, attempts: int = 5, delay: float = 2.0):
+    """
+    Подключается к Telegram с повторными попытками при сетевых сбоях.
+    """
+    last_exc = None
+    for attempt in range(1, attempts + 1):
+        try:
+            await client.connect()
+            return
+        except (ConnectionError, OSError) as exc:
+            last_exc = exc
+            if attempt < attempts:
+                console.print(
+                    f"  [warn]⚠  Не удалось подключиться "
+                    f"(попытка {attempt}/{attempts}): {exc}. Повтор…[/warn]"
+                )
+                await asyncio.sleep(delay)
+    console.print(f"  [err]✗  Не удалось подключиться к Telegram: {last_exc}[/err]")
+    sys.exit(1)
+
+
+async def _ensure_connected(client: TelegramClient):
+    """Переподключается, если соединение было разорвано."""
+    if not client.is_connected():
+        console.print("  [dim]Переподключаюсь к Telegram…[/dim]")
+        await _connect_with_retry(client)
+
+
+# ╔══════════════════════════════════════════════╗
 # ║                 Авторизация                  ║
 # ╚══════════════════════════════════════════════╝
 
 async def do_login(client: TelegramClient):
     """
-    Интерактивный вход в аккаунт: номер телефона → код → опциональный 2FA.
-    Пропускается, если сессия уже активна.
+    Вход: телефон → код → 2FA.
+    Retry для AuthRestartError и сетевых сбоев.
     """
+    await _ensure_connected(client)
+
     if await client.is_user_authorized():
         return
 
     console.print(Rule("[accent]  Вход в аккаунт  [/accent]", style="magenta"))
     console.print()
 
-    phone = Prompt.ask(
-        "  [info]Номер телефона[/info]  [dim](например +79991234567)[/dim]"
+    phone = _ask(
+        "  [info]Номер телефона[/info]  [dim](например +79960270499)[/dim]"
     ).strip()
 
-    console.print("  [dim]Отправляю код подтверждения…[/dim]")
+    sent = None
+    last_exc = None
 
-    try:
-        sent = await client(
-            SendCodeRequest(
-                phone_number=phone,
-                api_id=client.api_id,
-                api_hash=client.api_hash,
-                settings=CodeSettings(
-                    allow_flashcall=False,
-                    current_number=False,
-                    allow_app_hash=False,
-                ),
+    for attempt in range(1, AUTH_RETRY_COUNT + 1):
+        try:
+            await _ensure_connected(client)
+            suffix = f" (попытка {attempt}/{AUTH_RETRY_COUNT})" if attempt > 1 else ""
+            console.print(f"  [dim]Отправляю код подтверждения{suffix}…[/dim]")
+
+            sent = await client(
+                SendCodeRequest(
+                    phone_number=phone,
+                    api_id=client.api_id,
+                    api_hash=client.api_hash,
+                    settings=CodeSettings(
+                        allow_flashcall=False,
+                        current_number=False,
+                        allow_app_hash=False,
+                    ),
+                )
             )
+            break  # успех — выходим из цикла
+
+        except errors.AuthRestartError:
+            last_exc = "AuthRestartError"
+            console.print(
+                f"  [warn]⚠  Telegram запросил перезапуск авторизации. "
+                f"Повтор через {AUTH_RETRY_DELAY} сек…[/warn]"
+            )
+            await asyncio.sleep(AUTH_RETRY_DELAY)
+
+        except (ConnectionError, OSError) as exc:
+            last_exc = str(exc)
+            console.print(f"  [warn]⚠  Сетевая ошибка: {exc}. Повтор…[/warn]")
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            await asyncio.sleep(AUTH_RETRY_DELAY)
+
+        except Exception as exc:
+            console.print(f"  [err]✗  Не удалось отправить код: {exc}[/err]")
+            sys.exit(1)
+
+    if sent is None:
+        console.print(
+            f"\n  [err]✗  Не удалось получить код после {AUTH_RETRY_COUNT} попыток.[/err]\n"
+            f"  [dim]Последняя ошибка: {last_exc}\n\n"
+            "  Советы:\n"
+            "   • Проверь интернет-соединение\n"
+            "   • Убедись, что API ID / Hash верные (my.telegram.org)\n"
+            "   • Подожди 1–2 минуты и запусти снова[/dim]"
         )
-    except Exception as exc:
-        console.print(f"  [err]✗  Не удалось отправить код: {exc}[/err]")
         sys.exit(1)
 
     delivery = type(sent.type).__name__.replace("SentCodeType", "")
@@ -247,9 +373,10 @@ async def do_login(client: TelegramClient):
         console.print(f"  [dim]Действителен {sent.timeout} сек.[/dim]")
     console.print()
 
-    code = Prompt.ask("  [info]Код подтверждения[/info]").strip()
+    code = _ask("  [info]Код подтверждения[/info]").strip()
 
     try:
+        await _ensure_connected(client)
         await client(
             SignInRequest(
                 phone_number=phone,
@@ -257,16 +384,27 @@ async def do_login(client: TelegramClient):
                 phone_code=code,
             )
         )
+
     except errors.SessionPasswordNeededError:
         console.print()
         console.print("  [warn]⚠  Включена двухфакторная аутентификация.[/warn]")
-        passwd = Prompt.ask("  [warn]Пароль 2FA[/warn]", password=True)
-        pwd_obj = await client(GetPasswordRequest())
+        passwd = _ask_password("  [warn]Пароль 2FA[/warn]")
         try:
+            await _ensure_connected(client)
+            pwd_obj = await client(GetPasswordRequest())
             await client(CheckPasswordRequest(password=compute_check(pwd_obj, passwd)))
         except Exception as exc:
-            console.print(f"  [err]✗  Неверный пароль: {exc}[/err]")
+            console.print(f"  [err]✗  Неверный пароль или ошибка: {exc}[/err]")
             sys.exit(1)
+
+    except errors.PhoneCodeInvalidError:
+        console.print("  [err]✗  Неверный код подтверждения.[/err]")
+        sys.exit(1)
+
+    except errors.PhoneCodeExpiredError:
+        console.print("  [err]✗  Код истёк. Запусти скрипт заново.[/err]")
+        sys.exit(1)
+
     except Exception as exc:
         console.print(f"  [err]✗  Ошибка входа: {exc}[/err]")
         sys.exit(1)
@@ -282,21 +420,7 @@ async def do_login(client: TelegramClient):
 async def collect_caption_from_saved(
     client: TelegramClient, me
 ) -> tuple[str | None, list | None]:
-    """
-    Предлагает пользователю написать подпись к подарку прямо в «Избранном» Telegram.
-
-    Это удобно, потому что:
-      — там работают любые эмодзи, в том числе анимированные премиум-эмодзи;
-      — не нужно копировать текст вручную в терминал;
-      — скрипт автоматически подхватит все сущности (CustomEmoji и др.).
-
-    Возвращает (text, entities), готовые для TextWithEntities,
-    или (None, None), если пользователь решил пропустить подпись.
-
-    Лимит Telegram: не более 128 символов. Если сообщение длиннее —
-    пользователь получает предупреждение и возможность отправить более короткое.
-    """
-    # ── фиксируем текущий ID, чтобы смотреть только на НОВЫЕ сообщения ───────
+    await _ensure_connected(client)
     prev_msgs = await client.get_messages(me, limit=1)
     prev_id   = prev_msgs[0].id if prev_msgs else 0
 
@@ -318,31 +442,40 @@ async def collect_caption_from_saved(
         )
     )
 
+    last_warn_at = 0.0
     while True:
-        input()   # ждём Enter от пользователя
+        try:
+            input()
+        except EOFError:
+            # A-Shell иногда бросает EOFError вместо блокирующего ожидания —
+            # в этом случае просто продолжаем опрашивать «Избранное» вместо
+            # того, чтобы зависнуть или молча всё пропустить.
+            time.sleep(1)
 
-        # ── ищем новые сообщения в «Избранном» ───────────────────────────────
+        await _ensure_connected(client)
         recent = await client.get_messages(me, limit=10)
         target = None
 
         for m in recent:
             if m.id <= prev_id:
                 break
-            if m.message:   # любое текстовое сообщение подходит
+            if m.message:
                 target = m
                 break
 
         if target is None:
-            console.print(
-                "  [warn]⚠  Новых сообщений в «Избранном» не найдено.[/warn]\n"
-                "  [dim]Убедись, что отправил сообщение ПОСЛЕ этого шага, "
-                "и нажми Enter снова.[/dim]"
-            )
+            now = time.monotonic()
+            if now - last_warn_at > 3:
+                console.print(
+                    "  [warn]⚠  Новых сообщений в «Избранном» не найдено.[/warn]\n"
+                    "  [dim]Убедись, что отправил сообщение ПОСЛЕ этого шага, "
+                    "и нажми Enter снова.[/dim]"
+                )
+                last_warn_at = now
             continue
 
         char_count = len(target.message)
 
-        # ── проверка лимита 128 символов ─────────────────────────────────────
         if char_count > CAPTION_LIMIT:
             console.print(
                 f"\n  [err]✗  Слишком длинная подпись![/err]\n"
@@ -351,17 +484,14 @@ async def collect_caption_from_saved(
                 "  [dim]Отправь в «Избранное» более короткое сообщение "
                 "и нажми Enter.[/dim]"
             )
-            prev_id = target.id   # сдвигаем водяной знак, чтобы поймать следующее
+            prev_id = target.id
             continue
 
-        # ── нашли подходящее сообщение ────────────────────────────────────────
         break
 
     raw_text = target.message
     entities = target.entities or []
-
-    # ── отбираем только премиум-эмодзи для отображения в таблице ─────────────
-    premium = [e for e in entities if isinstance(e, MessageEntityCustomEmoji)]
+    premium  = [e for e in entities if isinstance(e, MessageEntityCustomEmoji)]
 
     if premium:
         table = Table(
@@ -387,7 +517,6 @@ async def collect_caption_from_saved(
         console.print()
         console.print(table)
 
-    # ── превью подписи ────────────────────────────────────────────────────────
     console.print()
     console.print(
         Panel(
@@ -400,7 +529,7 @@ async def collect_caption_from_saved(
     )
     console.print()
 
-    ok = Confirm.ask("  [accent]Использовать эту подпись?[/accent]", default=True)
+    ok = _confirm("  [accent]Использовать эту подпись?[/accent]", default=True)
     if not ok:
         console.print("  [warn]Пропущено.[/warn]")
         return None, None
@@ -415,16 +544,11 @@ async def collect_caption_from_saved(
 async def build_caption(
     client: TelegramClient, me
 ) -> tuple[str | None, list | None]:
-    """
-    Спрашивает, нужна ли подпись к подарку.
-    Если да — запускает процесс сбора из «Избранного».
-    Возвращает (text, entities) или (None, None).
-    """
     console.print()
     console.print(Rule("[accent]  Подпись к подарку  [/accent]", style="magenta"))
     console.print()
 
-    want_caption = Confirm.ask(
+    want_caption = _confirm(
         "  [accent]Добавить подпись к подарку?[/accent]", default=False
     )
 
@@ -439,16 +563,11 @@ async def build_caption(
 # ╚══════════════════════════════════════════════╝
 
 async def resolve_recipient(client: TelegramClient):
-    """
-    Запрашивает @username или числовой ID получателя
-    и резолвит его через Telegram API.
-    Возвращает объект пользователя или None при ошибке.
-    """
     console.print()
     console.print(Rule("[accent]  Получатель  [/accent]", style="magenta"))
     console.print()
 
-    raw = Prompt.ask(
+    raw = _ask(
         "  [accent]Получатель[/accent]  [dim](@username или числовой ID)[/dim]"
     ).strip()
 
@@ -457,6 +576,7 @@ async def resolve_recipient(client: TelegramClient):
         return None
 
     try:
+        await _ensure_connected(client)
         stripped = raw.lstrip("@")
         lookup   = int(stripped) if stripped.isdigit() else raw
         user     = await client.get_entity(lookup)
@@ -482,10 +602,6 @@ async def send_gift(
     caption_text: str | None,
     caption_entities: list | None,
 ):
-    """
-    Формирует invoice для звёздного подарка и отправляет форму оплаты.
-    Списывает звёзды с аккаунта авторизованного пользователя.
-    """
     msg_obj = None
     if caption_text:
         msg_obj = TextWithEntities(
@@ -493,6 +609,7 @@ async def send_gift(
             entities=caption_entities or [],
         )
 
+    await _ensure_connected(client)
     input_peer = await client.get_input_entity(user)
     invoice    = InputInvoiceStarGift(
         peer=input_peer,
@@ -502,9 +619,11 @@ async def send_gift(
 
     console.print()
     console.print("  [dim]Получаю форму оплаты…[/dim]")
+    await _ensure_connected(client)
     form = await client(GetPaymentFormRequest(invoice=invoice))
 
     console.print("  [dim]Отправляю подарок…[/dim]")
+    await _ensure_connected(client)
     await client(SendStarsFormRequest(form_id=form.form_id, invoice=invoice))
 
 
@@ -524,7 +643,6 @@ async def main():
     )
     args = parser.parse_args()
 
-    # ── сброс ─────────────────────────────────────────────────────────────────
     if args.reset:
         if ENV_FILE.exists():
             ENV_FILE.unlink()
@@ -533,7 +651,6 @@ async def main():
             print(f"  ⚠  Файл {ENV_FILE} не найден.")
         sys.exit(0)
 
-    # ── запуск ────────────────────────────────────────────────────────────────
     show_banner()
     api_id, api_hash = load_or_prompt_credentials()
 
@@ -544,11 +661,18 @@ async def main():
         app_version="5.9.0 K",
         lang_code="ru",
         system_lang_code="ru-RU",
+        # ── Параметры надёжности соединения ───────────────────────────────────
+        connection_retries=5,   # попыток переподключения при разрыве
+        retry_delay=2,          # задержка между попытками (сек)
+        timeout=30,             # таймаут ожидания ответа сервера (сек)
+        auto_reconnect=True,    # авто-переподключение при потере связи
+        request_retries=3,      # повторы каждого отдельного запроса
     )
 
-    await client.connect()
+    await _connect_with_retry(client)
     await do_login(client)
 
+    await _ensure_connected(client)
     me = await client.get_me()
     console.print()
     console.print(Rule(style="magenta"))
@@ -565,24 +689,20 @@ async def main():
     console.print()
 
     while True:
-        raw = Prompt.ask(
-            "  [accent]ID подарка[/accent]  [dim](число)[/dim]"
-        ).strip()
+        raw = _ask("  [accent]ID подарка[/accent]  [dim](число)[/dim]").strip()
         if raw.isdigit():
             gift_id = int(raw)
             break
         console.print("  [err]✗  ID подарка должен быть числом.[/err]")
 
-    # ── подпись ───────────────────────────────────────────────────────────────
     caption_text, caption_entities = await build_caption(client, me)
 
-    # ── получатель ────────────────────────────────────────────────────────────
     user = await resolve_recipient(client)
     if user is None:
         await client.disconnect()
         return
 
-    # ── итоговая сводка ───────────────────────────────────────────────────────
+    # ── Итоговая сводка ───────────────────────────────────────────────────────
     console.print()
     console.print(Rule(style="magenta"))
 
@@ -592,8 +712,8 @@ async def main():
     )
 
     s = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
-    s.add_column("ключ",  style="accent", min_width=16)
-    s.add_column("значение", style="hi")
+    s.add_column("ключ",      style="accent", min_width=16)
+    s.add_column("значение",  style="hi")
 
     name = getattr(user, "first_name", None) or getattr(user, "title", str(user.id))
 
@@ -612,12 +732,11 @@ async def main():
     )
     console.print()
 
-    if not Confirm.ask("  [accent]Отправить подарок?[/accent]", default=True):
+    if not _confirm("  [accent]Отправить подарок?[/accent]", default=True):
         console.print("\n  [warn]Отменено.[/warn]")
         await client.disconnect()
         return
 
-    # ── отправка ──────────────────────────────────────────────────────────────
     try:
         await send_gift(client, gift_id, user, caption_text, caption_entities)
         console.print()
@@ -642,8 +761,12 @@ async def main():
     console.print()
 
 
+# ╔══════════════════════════════════════════════╗
+# ║                   Запуск                     ║
+# ╚══════════════════════════════════════════════╝
+
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        _run_async(main())
     except KeyboardInterrupt:
         console.print("\n\n  [warn]Прервано пользователем.[/warn]\n")
